@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@types/geojson':
+        specifier: ^7946.0.16
+        version: 7946.0.16
+      '@types/leaflet':
+        specifier: ^1.9.21
+        version: 1.9.21
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
@@ -24,9 +30,6 @@ importers:
       '@eslint/js':
         specifier: ^9.39.1
         version: 9.39.2
-      '@types/leaflet':
-        specifier: ^1.9.21
-        version: 1.9.21
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.4
