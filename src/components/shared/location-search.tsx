@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-export type SearchLevel = "Province" | "District" | "Cell" | "Village";
+export type SearchLevel = "Province" | "District" | "Sector" | "Cell" | "Village";
 
 export type SearchItem = {
   id: string;
@@ -39,8 +39,15 @@ export default function LocationSearch({
   onPick: (item: SearchItem) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const q = useMemo(() => normalize(debouncedQuery), [debouncedQuery]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
 
   const searchIndex = useMemo(() => {
     const map = new Map<string, SearchItem>();
@@ -87,6 +94,7 @@ export default function LocationSearch({
         `${province}|${country}`,
         `${province} • ${country}`,
       );
+      add("Sector", sector, idx, `${province}|${district}`, `${province} • ${district}`);
       add(
         "Cell",
         cell,
@@ -107,7 +115,6 @@ export default function LocationSearch({
   }, [features]);
 
   const results = useMemo(() => {
-    const q = normalize(query);
     if (q.length < 2) return [] as SearchItem[];
     return searchIndex
       .filter((item) => item.searchText.includes(q))
@@ -120,8 +127,9 @@ export default function LocationSearch({
           const order: Record<SearchLevel, number> = {
             Province: 0,
             District: 1,
-            Cell: 2,
-            Village: 3,
+            Sector: 2,
+            Cell: 3,
+            Village: 4,
           };
           return order[a.level] - order[b.level];
         }
@@ -129,7 +137,22 @@ export default function LocationSearch({
         return a.indices.length - b.indices.length;
       })
       .slice(0, 50);
-  }, [query, searchIndex]);
+  }, [q, searchIndex]);
+
+  const groupedResults = useMemo(() => {
+    const nameMatches: SearchItem[] = [];
+    const parentOnlyMatches: SearchItem[] = [];
+
+    for (const item of results) {
+      const matchesName = normalize(item.name).includes(q);
+      const matchesParents = normalize(item.parentsLabel).includes(q);
+      const isParentsOnlyMatch = q.length >= 2 && !matchesName && matchesParents;
+      if (isParentsOnlyMatch) parentOnlyMatches.push(item);
+      else nameMatches.push(item);
+    }
+
+    return { nameMatches, parentOnlyMatches };
+  }, [q, results]);
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
@@ -159,34 +182,95 @@ export default function LocationSearch({
               if (e.key === "Escape") setIsOpen(false);
               if (e.key === "Enter" && results.length === 1) onPick(results[0]);
             }}
-            placeholder="Search Province, District, Cell, or Village..."
+            placeholder="Search Province, District, Sector, Cell, or Village..."
             className="bg-zinc-950/80 backdrop-blur focus-visible:ring-0"
           />
 
           {isOpen && results.length > 0 && (
-            <div className="mt-2 max-h-[60vh] overflow-auto rounded-lg border border-white/10 bg-zinc-950/80 backdrop-blur">
-              {results.map((item) => (
-                <Button
-                  key={item.id}
-                  type="button"
-                  variant="ghost"
-                  className="h-auto w-full justify-between gap-3 rounded-none px-3 py-2 text-left hover:bg-white/5 hover:text-zinc-50"
-                  onClick={() => {
-                    setQuery(item.name);
-                    setIsOpen(false);
-                    onPick(item);
-                  }}
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm text-zinc-50">{item.name}</div>
-                    <div className="truncate text-xs text-zinc-400">
-                      {item.parentsLabel}
+            <div className="mt-2 max-h-[60vh] overflow-auto rounded-lg border border-white/10 bg-zinc-950/90 backdrop-blur">
+              {/* Name matches first */}
+              <div className="border-t border-white/10 first:border-t-0">
+                <div className="sticky top-0 z-10 border-b border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-medium tracking-wide text-zinc-400 uppercase backdrop-blur">
+                  Matches
+                </div>
+
+                {groupedResults.nameMatches.map((item, idx) => {
+                  const prev = groupedResults.nameMatches[idx - 1];
+                  const showParentDivider =
+                    idx > 0 && prev && prev.parentsLabel !== item.parentsLabel;
+
+                  return (
+                    <div key={item.id}>
+                      {showParentDivider && (
+                        <div className="mx-3 border-t border-white/5" />
+                      )}
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto w-full justify-between gap-3 rounded-none bg-white/0 px-3 py-2 text-left hover:bg-white/10 hover:text-zinc-50"
+                        onClick={() => {
+                          setQuery(item.name);
+                          setIsOpen(false);
+                          onPick(item);
+                        }}
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm text-zinc-50">{item.name}</div>
+                          <div className="truncate text-xs text-zinc-400">
+                            {item.parentsLabel}
+                          </div>
+                        </div>
+                        <Badge className="shrink-0">{item.level}</Badge>
+                      </Button>
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Parent-only matches */}
+              {groupedResults.parentOnlyMatches.length > 0 && (
+                <div className="border-t border-white/10">
+                  <div className="sticky top-0 z-10 border-b border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-medium tracking-wide text-zinc-400 uppercase backdrop-blur">
+                    Others
                   </div>
 
-                  <Badge className="shrink-0">{item.level}</Badge>
-                </Button>
-              ))}
+                  {groupedResults.parentOnlyMatches.map((item, idx) => {
+                    const prev = groupedResults.parentOnlyMatches[idx - 1];
+                    const showParentDivider =
+                      idx > 0 && prev && prev.parentsLabel !== item.parentsLabel;
+
+                    return (
+                      <div key={item.id}>
+                        {showParentDivider && (
+                          <div className="mx-3 border-t border-white/10" />
+                        )}
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-auto w-full justify-between gap-3 rounded-none bg-white/2 px-3 py-2 text-left hover:bg-white/10 hover:text-zinc-50"
+                          onClick={() => {
+                            setQuery(item.name);
+                            setIsOpen(false);
+                            onPick(item);
+                          }}
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-sm text-zinc-50">
+                              {item.name}
+                            </div>
+                            <div className="truncate text-xs text-zinc-400">
+                              {item.parentsLabel}
+                            </div>
+                          </div>
+                          <Badge className="shrink-0">{item.level}</Badge>
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </CardContent>

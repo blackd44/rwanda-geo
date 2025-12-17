@@ -23,7 +23,7 @@ export default function SelectedCard({
   };
 
   return (
-    <Card className="absolute top-4 right-4 z-1000 max-h-[calc(100%-2rem)] w-[340px] max-w-[calc(100%-2rem)] overflow-auto border-white/10 bg-zinc-950/80 text-zinc-50 shadow-2xl backdrop-blur">
+    <Card className="max-h-[calc(100vh-2rem)] w-[340px] max-w-[calc(100vw-2rem)] overflow-auto border-white/10 bg-zinc-950/80 text-zinc-50 shadow-2xl backdrop-blur">
       <CardHeader className="pb-3">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">

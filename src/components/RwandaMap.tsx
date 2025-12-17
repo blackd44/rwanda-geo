@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GeoJSON, MapContainer, TileLayer, ZoomControl } from "react-leaflet";
 import villages from "../data/rwanda_villages_simplified.json";
 import type {
@@ -12,13 +12,25 @@ import type { LatLngBounds, Map as LeafletMap, Path } from "leaflet";
 import type { SearchItem } from "@/components/shared/location-search";
 import LocationSearch from "@/components/shared/location-search";
 import SelectedCard from "@/components/shared/selected";
+import RegionStatsCard from "@/components/shared/region-stats";
 
 export default function RwandaMap() {
   const [selected, setSelected] = useState<GeoJsonProperties | null>(null);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
+  const [highlightedRegion, setHighlightedRegion] = useState<SearchItem | null>(null);
   const lastSelectedLayer = useRef<Path | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const boundsCache = useRef<Map<number, LatLngBounds>>(new Map());
+  const selectedRef = useRef<GeoJsonProperties | null>(null);
+  const highlightedRegionRef = useRef<SearchItem | null>(null);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    highlightedRegionRef.current = highlightedRegion;
+  }, [highlightedRegion]);
 
   const getLabel = (p: GeoJsonProperties | null | undefined, key: string) => {
     const v =
@@ -72,6 +84,11 @@ export default function RwandaMap() {
     setSelected(null);
   };
 
+  const clearRegionHighlight = () => {
+    setHighlightedIds([]);
+    setHighlightedRegion(null);
+  };
+
   const highlightedIdSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
 
   const idsFromIndices = (indices: number[]) =>
@@ -106,23 +123,46 @@ export default function RwandaMap() {
 
     if (item.level === "Village") {
       // Select ONE village (and clear any region highlight)
-      setHighlightedIds([]);
+      clearRegionHighlight();
       const first = features[item.indices[0]];
       setSelected(first?.properties ?? null);
       return;
     }
 
-    // Province/District/Cell: highlight ALL villages in that area (no "selected")
+    // Province/District/Sector/Cell: highlight ALL villages in that area (no "selected")
     setSelected(null);
+    setHighlightedRegion(item);
     setHighlightedIds(idsFromIndices(item.indices));
   };
+
+  const regionStats = useMemo(() => {
+    if (!highlightedRegion) return null;
+    const uniqueIndices = Array.from(new Set(highlightedRegion.indices));
+    const districts = new Set<string>();
+    const sectors = new Set<string>();
+    const cells = new Set<string>();
+
+    for (const idx of uniqueIndices) {
+      const p = features[idx]?.properties as GeoJsonProperties | null | undefined;
+      districts.add(getLabel(p, "NAME_2"));
+      sectors.add(getLabel(p, "NAME_3"));
+      cells.add(getLabel(p, "NAME_4"));
+    }
+
+    return {
+      villages: uniqueIndices.length,
+      districts: districts.size,
+      sectors: sectors.size,
+      cells: cells.size,
+    };
+  }, [features, highlightedRegion]);
 
   const onEachFeature = (feature: Feature, layer: Path) => {
     const p = feature.properties;
 
     const handleClick = () => {
       const clickedId = featureId(p);
-      const currentId = selected ? featureId(selected) : null;
+      const currentId = selectedRef.current ? featureId(selectedRef.current) : null;
       const isToggleOff = currentId && clickedId === currentId;
 
       // Toggle off if clicking the same feature again
@@ -146,7 +186,7 @@ export default function RwandaMap() {
     });
 
     layer.on("dblclick", () => {
-      setHighlightedIds([]);
+      clearRegionHighlight();
 
       handleClick();
     });
@@ -182,14 +222,24 @@ export default function RwandaMap() {
         />
       </MapContainer>
 
-      {selected && (
-        <SelectedCard
-          selected={selected}
-          lastSelectedLayerRef={lastSelectedLayer}
-          baseStyle={baseStyle}
-          setSelected={setSelected}
-        />
-      )}
+      <div className="absolute top-4 right-4 z-1000 flex flex-col gap-4">
+        {selected && (
+          <SelectedCard
+            selected={selected}
+            lastSelectedLayerRef={lastSelectedLayer}
+            baseStyle={baseStyle}
+            setSelected={setSelected}
+          />
+        )}
+
+        {highlightedRegion && regionStats && (
+          <RegionStatsCard
+            region={highlightedRegion}
+            stats={regionStats}
+            onClose={clearRegionHighlight}
+          />
+        )}
+      </div>
     </div>
   );
 }
