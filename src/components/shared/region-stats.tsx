@@ -41,7 +41,7 @@ export default function RegionStatsCard({
   })();
 
   return (
-    <Card className="max-h-[calc(100vh-2rem)] w-[340px] max-w-[calc(100vw-2rem)] overflow-auto border-orange-500/10 bg-linear-to-br from-zinc-950/80 from-50% to-orange-950/80 to-150% text-zinc-50 shadow-2xl backdrop-blur">
+    <Card className="max-h-[calc(100vh-2rem)] w-[340px] max-w-[calc(100vw-2rem)] overflow-auto border-orange-500/10 bg-linear-to-br from-zinc-950/80 from-50% to-orange-950/80 to-120% text-zinc-50 shadow-2xl backdrop-blur">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">

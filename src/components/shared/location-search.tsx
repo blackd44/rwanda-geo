@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useUrlParam } from "@/hooks/useUrlParam";
+import { buildSearchIndexMap, normalize } from "@/lib/search-index";
 
 export type SearchLevel = "Province" | "District" | "Sector" | "Cell" | "Village";
 
@@ -16,21 +18,6 @@ export type SearchItem = {
   indices: number[];
 };
 
-function normalize(s: string) {
-  return s
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getProp(p: Feature["properties"], key: string) {
-  const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
-  if (v === null || v === undefined || v === "") return "Unknown";
-  return String(v);
-}
-
 export default function LocationSearch({
   features,
   onPick,
@@ -38,7 +25,7 @@ export default function LocationSearch({
   features: Feature[];
   onPick: (item: SearchItem) => void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useUrlParam<string>("search", "", 300);
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -50,67 +37,7 @@ export default function LocationSearch({
   }, [query]);
 
   const searchIndex = useMemo(() => {
-    const map = new Map<string, SearchItem>();
-    const add = (
-      level: SearchLevel,
-      name: string,
-      idx: number,
-      parentsKey: string,
-      parentsLabel: string,
-    ) => {
-      const clean = name.trim();
-      if (!clean) return;
-      // Important: do NOT de-dupe purely by name. Many locations share the same name
-      // across different parents (e.g. two Cells with the same name in different Districts).
-      const key = `${level}:${normalize(clean)}|${normalize(parentsKey)}`;
-      const existing = map.get(key);
-      if (existing) {
-        existing.indices.push(idx);
-        return;
-      }
-      map.set(key, {
-        id: key,
-        level,
-        name: clean,
-        parentsLabel,
-        searchText: normalize(`${clean} ${parentsLabel}`),
-        indices: [idx],
-      });
-    };
-
-    features.forEach((f, idx) => {
-      const p = f.properties;
-      const country = getProp(p, "NAME_0");
-      const province = getProp(p, "NAME_1");
-      const district = getProp(p, "NAME_2");
-      const sector = getProp(p, "NAME_3");
-      const cell = getProp(p, "NAME_4");
-
-      add("Province", province, idx, country, country);
-      add(
-        "District",
-        district,
-        idx,
-        `${province}|${country}`,
-        `${province} • ${country}`,
-      );
-      add("Sector", sector, idx, `${province}|${district}`, `${province} • ${district}`);
-      add(
-        "Cell",
-        cell,
-        idx,
-        `${province}|${district}|${sector}`,
-        `${province} • ${district} • ${sector}`,
-      );
-      add(
-        "Village",
-        getProp(p, "NAME_5"),
-        idx,
-        `${province}|${district}|${sector}|${cell}`,
-        `${province} • ${district} • ${sector} • ${cell}`,
-      );
-    });
-
+    const map = buildSearchIndexMap(features);
     return Array.from(map.values());
   }, [features]);
 

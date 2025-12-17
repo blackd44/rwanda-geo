@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Button } from "../ui/button";
 import type { GeoJsonProperties } from "geojson";
 import type { Path, PathOptions } from "leaflet";
+import { XIcon } from "lucide-react";
 
 export default function SelectedCard({
   selected,
@@ -23,7 +24,7 @@ export default function SelectedCard({
   };
 
   return (
-    <Card className="max-h-[calc(100vh-2rem)] w-[340px] max-w-[calc(100vw-2rem)] overflow-auto border-white/10 bg-linear-to-br from-zinc-950/80 from-50% to-blue-950/80 to-150% text-zinc-50 shadow-2xl backdrop-blur">
+    <Card className="max-h-[calc(100vh-2rem)] w-[340px] max-w-[calc(100vw-2rem)] overflow-auto border-white/10 bg-linear-to-br from-zinc-950/80 from-50% to-blue-950/80 to-120% text-zinc-50 shadow-2xl backdrop-blur">
       <CardHeader className="pb-3">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -39,7 +40,7 @@ export default function SelectedCard({
             type="button"
             variant="secondary"
             size="sm"
-            className="shrink-0"
+            className="shrink-0 p-2"
             onClick={() => {
               if (lastSelectedLayerRef.current) {
                 lastSelectedLayerRef.current.setStyle(baseStyle);
@@ -49,7 +50,7 @@ export default function SelectedCard({
             }}
             aria-label="Close selected village details"
           >
-            Close
+            <XIcon className="h-4 w-4" />
           </Button>
         </div>
       </CardHeader>

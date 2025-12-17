@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { GeoJSON, MapContainer, TileLayer, ZoomControl } from "react-leaflet";
 import villages from "../data/rwanda_villages_simplified.json";
 import type {
@@ -13,43 +13,35 @@ import type { SearchItem } from "@/components/shared/location-search";
 import LocationSearch from "@/components/shared/location-search";
 import SelectedCard from "@/components/shared/selected";
 import RegionStatsCard from "@/components/shared/region-stats";
+import { useUrlParam } from "@/hooks/useUrlParam";
+import { buildSearchIndexMap } from "@/lib/search-index";
+
+function getLabel(p: GeoJsonProperties | null | undefined, key: string) {
+  const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
+  if (v === null || v === undefined || v === "") return "Unknown";
+  return String(v);
+}
+
+function featureId(p: GeoJsonProperties | null | undefined) {
+  const safe = (k: string) => getLabel(p, k);
+  return [
+    safe("ID_0"),
+    safe("ID_1"),
+    safe("ID_2"),
+    safe("ID_3"),
+    safe("ID_4"),
+    safe("ID_5"),
+  ].join("-");
+}
 
 export default function RwandaMap() {
-  const [selected, setSelected] = useState<GeoJsonProperties | null>(null);
-  const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
-  const [highlightedRegion, setHighlightedRegion] = useState<SearchItem | null>(null);
+  const [selectedId, setSelectedId] = useUrlParam<string>("selected", "", 0);
+  const [highlightedId, setHighlightedId] = useUrlParam<string>("highlight", "", 0);
   const lastSelectedLayer = useRef<Path | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const boundsCache = useRef<Map<number, LatLngBounds>>(new Map());
   const selectedRef = useRef<GeoJsonProperties | null>(null);
   const highlightedRegionRef = useRef<SearchItem | null>(null);
-
-  useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
-
-  useEffect(() => {
-    highlightedRegionRef.current = highlightedRegion;
-  }, [highlightedRegion]);
-
-  const getLabel = (p: GeoJsonProperties | null | undefined, key: string) => {
-    const v =
-      p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
-    if (v === null || v === undefined || v === "") return "Unknown";
-    return String(v);
-  };
-
-  const featureId = (p: GeoJsonProperties | null | undefined) => {
-    const safe = (k: string) => getLabel(p, k);
-    return [
-      safe("ID_0"),
-      safe("ID_1"),
-      safe("ID_2"),
-      safe("ID_3"),
-      safe("ID_4"),
-      safe("ID_5"),
-    ].join("-");
-  };
 
   const baseStyle = {
     color: "#64748b",
@@ -76,45 +68,99 @@ export default function RwandaMap() {
     [featureCollection.features],
   );
 
+  // Build search index to reconstruct SearchItems from IDs
+  const searchIndexMap = useMemo(() => buildSearchIndexMap(features), [features]);
+
+  const idsFromIndices = useCallback(
+    (indices: number[]) =>
+      indices
+        .map((idx) => features[idx]?.properties)
+        .filter(Boolean)
+        .map((p) => featureId(p as GeoJsonProperties)),
+    [features],
+  );
+
+  const fitToIndices = useCallback(
+    (indices: number[]) => {
+      if (!mapRef.current) return;
+      let bounds: LatLngBounds | null = null;
+
+      for (const idx of indices) {
+        let b = boundsCache.current.get(idx);
+        if (!b) {
+          b = L.geoJSON(features[idx] as unknown as GeoJsonObject).getBounds();
+          boundsCache.current.set(idx, b);
+        }
+        if (!b?.isValid()) continue;
+        bounds = bounds ? bounds.extend(b) : b;
+      }
+
+      if (bounds?.isValid()) {
+        mapRef.current.fitBounds(bounds, { padding: [24, 24] });
+      }
+    },
+    [features],
+  );
+
+  // Reconstruct selected from URL param
+  const selected = useMemo(() => {
+    if (!selectedId) return null;
+    const feature = features.find((f) => featureId(f.properties) === selectedId);
+    return feature?.properties ?? null;
+  }, [selectedId, features]);
+
+  // Reconstruct highlighted region from URL param
+  const highlightedRegion = useMemo(() => {
+    if (!highlightedId) return null;
+    return searchIndexMap.get(highlightedId) ?? null;
+  }, [highlightedId, searchIndexMap]);
+
+  const highlightedIds = useMemo(() => {
+    if (!highlightedRegion) return [];
+    return idsFromIndices(highlightedRegion.indices);
+  }, [highlightedRegion, idsFromIndices]);
+
+  // Fit map to highlighted region when it changes
+  useEffect(() => {
+    if (highlightedRegion) {
+      fitToIndices(highlightedRegion.indices);
+    }
+  }, [highlightedRegion, fitToIndices]);
+
+  // Clear invalid URL params
+  useEffect(() => {
+    if (selectedId && !selected) {
+      setSelectedId("" as typeof selectedId);
+    }
+  }, [selectedId, selected, setSelectedId]);
+
+  useEffect(() => {
+    if (highlightedId && !highlightedRegion) {
+      setHighlightedId("");
+    }
+  }, [highlightedId, highlightedRegion, setHighlightedId]);
+
   const clearSelection = () => {
     if (lastSelectedLayer.current) {
       lastSelectedLayer.current.setStyle(baseStyle);
       lastSelectedLayer.current = null;
     }
-    setSelected(null);
+    setSelectedId("" as typeof selectedId);
   };
 
   const clearRegionHighlight = () => {
-    setHighlightedIds([]);
-    setHighlightedRegion(null);
+    setHighlightedId("");
   };
 
   const highlightedIdSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
 
-  const idsFromIndices = (indices: number[]) =>
-    indices
-      .map((idx) => features[idx]?.properties)
-      .filter(Boolean)
-      .map((p) => featureId(p as GeoJsonProperties));
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
-  const fitToIndices = (indices: number[]) => {
-    if (!mapRef.current) return;
-    let bounds: LatLngBounds | null = null;
-
-    for (const idx of indices) {
-      let b = boundsCache.current.get(idx);
-      if (!b) {
-        b = L.geoJSON(features[idx] as unknown as GeoJsonObject).getBounds();
-        boundsCache.current.set(idx, b);
-      }
-      if (!b?.isValid()) continue;
-      bounds = bounds ? bounds.extend(b) : b;
-    }
-
-    if (bounds?.isValid()) {
-      mapRef.current.fitBounds(bounds, { padding: [24, 24] });
-    }
-  };
+  useEffect(() => {
+    highlightedRegionRef.current = highlightedRegion;
+  }, [highlightedRegion]);
 
   const onPick = (item: SearchItem) => {
     // Clear existing single-feature highlight when jumping to a region
@@ -125,14 +171,15 @@ export default function RwandaMap() {
       // Select ONE village (and clear any region highlight)
       clearRegionHighlight();
       const first = features[item.indices[0]];
-      setSelected(first?.properties ?? null);
+      if (first?.properties) {
+        setSelectedId(featureId(first.properties));
+      }
       return;
     }
 
     // Province/District/Sector/Cell: highlight ALL villages in that area (no "selected")
-    setSelected(null);
-    setHighlightedRegion(item);
-    setHighlightedIds(idsFromIndices(item.indices));
+    setSelectedId("" as typeof selectedId);
+    setHighlightedId(item.id);
   };
 
   const regionStats = useMemo(() => {
@@ -162,14 +209,14 @@ export default function RwandaMap() {
 
     const handleClick = () => {
       const clickedId = featureId(p);
-      const currentId = selectedRef.current ? featureId(selectedRef.current) : null;
+      const currentId = selectedId;
       const isToggleOff = currentId && clickedId === currentId;
 
       // Toggle off if clicking the same feature again
       if (isToggleOff) {
         layer.setStyle(baseStyle);
         if (lastSelectedLayer.current === layer) lastSelectedLayer.current = null;
-        setSelected(null);
+        setSelectedId("");
         return;
       }
 
@@ -178,7 +225,7 @@ export default function RwandaMap() {
 
       layer.setStyle(selectedStyle);
       lastSelectedLayer.current = layer;
-      setSelected(p ?? null);
+      setSelectedId(clickedId);
     };
 
     layer.on("click", () => {
@@ -228,7 +275,13 @@ export default function RwandaMap() {
             selected={selected}
             lastSelectedLayerRef={lastSelectedLayer}
             baseStyle={baseStyle}
-            setSelected={setSelected}
+            setSelected={(value) => {
+              if (value) {
+                setSelectedId(featureId(value) as typeof selectedId);
+              } else {
+                setSelectedId("");
+              }
+            }}
           />
         )}
 
