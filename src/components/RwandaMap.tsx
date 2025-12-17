@@ -42,6 +42,7 @@ export default function RwandaMap() {
   const boundsCache = useRef<Map<number, LatLngBounds>>(new Map());
   const selectedRef = useRef<GeoJsonProperties | null>(null);
   const highlightedRegionRef = useRef<SearchItem | null>(null);
+  const hasInitialZoomed = useRef(false);
 
   const baseStyle = {
     color: "#64748b",
@@ -120,12 +121,55 @@ export default function RwandaMap() {
     return idsFromIndices(highlightedRegion.indices);
   }, [highlightedRegion, idsFromIndices]);
 
-  // Fit map to highlighted region when it changes
+  // Zoom to Rwanda bounds (default)
+  const zoomToRwanda = useCallback(() => {
+    if (!mapRef.current) return;
+    // Rwanda approximate bounds
+    const rwandaBounds: L.LatLngBoundsExpression = [
+      [-2.84, 28.86], // Southwest
+      [-1.05, 30.9], // Northeast
+    ];
+    mapRef.current.fitBounds(rwandaBounds, { padding: [24, 24] });
+  }, []);
+
+  // Zoom on initial page load only: selected > highlighted > Rwanda
   useEffect(() => {
-    if (highlightedRegion) {
-      fitToIndices(highlightedRegion.indices);
-    }
-  }, [highlightedRegion, fitToIndices]);
+    if (hasInitialZoomed.current || features.length === 0) return;
+
+    // Wait for map to be ready
+    const checkAndZoom = () => {
+      if (!mapRef.current) {
+        // Retry after a short delay if map isn't ready
+        setTimeout(checkAndZoom, 50);
+        return;
+      }
+
+      // Find selected feature index
+      let selectedFeatureIndex: number | null = null;
+      if (selected)
+        selectedFeatureIndex = features.findIndex(
+          (f) => featureId(f.properties) === featureId(selected),
+        );
+
+      // Zoom based on priority: selected > highlighted > Rwanda
+      if (selectedFeatureIndex !== null && selectedFeatureIndex >= 0)
+        // Zoom to selected feature
+        fitToIndices([selectedFeatureIndex]);
+      else if (highlightedRegion)
+        // Zoom to highlighted region
+        fitToIndices(highlightedRegion.indices);
+      else
+        // Zoom to Rwanda (default)
+        zoomToRwanda();
+
+      hasInitialZoomed.current = true;
+    };
+
+    // Start checking after a short delay to ensure map is initialized
+    const timeoutId = setTimeout(checkAndZoom, 100);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [features.length, selected, highlightedRegion]); // Trigger when features are loaded and state is ready
 
   // Clear invalid URL params
   useEffect(() => {

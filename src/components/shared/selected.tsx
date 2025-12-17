@@ -55,7 +55,7 @@ export default function SelectedCard({
         </div>
       </CardHeader>
 
-      <CardContent className="grid gap-3">
+      <CardContent className="grid gap-2">
         {[
           ["Cell", "NAME_4"],
           ["Sector", "NAME_3"],
