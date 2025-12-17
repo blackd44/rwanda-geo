@@ -18,6 +18,16 @@ export type SearchItem = {
   indices: number[];
 };
 
+const levelMap: Record<string, SearchLevel> = {
+  province: "Province",
+  district: "District",
+  sector: "Sector",
+  cell: "Cell",
+  village: "Village",
+};
+
+const allTypePrefixes = Object.keys(levelMap);
+
 export default function LocationSearch({
   features,
   onPick,
@@ -29,11 +39,50 @@ export default function LocationSearch({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const q = useMemo(() => normalize(debouncedQuery), [debouncedQuery]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(t);
+  }, [query]);
+
+  // Parse type filter from debounced query for search (e.g., ":cell name" -> filter: "Cell", searchQuery: "name")
+  const { filterLevel, normalizedSearchQuery } = useMemo(() => {
+    const trimmed = debouncedQuery.trim();
+    const hasTypePrefix = trimmed.startsWith(":");
+    const typePrefix = hasTypePrefix
+      ? trimmed.slice(1).split(/\s+/, 2)[0]?.toLowerCase()
+      : null;
+    const searchQuery = hasTypePrefix
+      ? trimmed.slice(1).split(/\s+/, 2)[1] || ""
+      : debouncedQuery;
+
+    const filterLevel = typePrefix && levelMap[typePrefix] ? levelMap[typePrefix] : null;
+    const normalizedSearchQuery = normalize(searchQuery);
+
+    return { filterLevel, normalizedSearchQuery };
+  }, [debouncedQuery]);
+
+  // Parse type prefix suggestions from current query (not debounced) for immediate feedback
+  const typePrefixSuggestions = useMemo(() => {
+    const trimmed = query.trim();
+    const hasTypePrefix = trimmed.startsWith(":");
+    const typePrefix = hasTypePrefix
+      ? trimmed.slice(1).split(/\s+/, 2)[0]?.toLowerCase()
+      : null;
+    const isValidPrefix = typePrefix && levelMap[typePrefix];
+
+    let suggestions: string[] = [];
+    if (hasTypePrefix && typePrefix && !isValidPrefix) {
+      // User is typing a type prefix, suggest matching ones
+      suggestions = allTypePrefixes.filter((prefix) =>
+        prefix.toLowerCase().startsWith(typePrefix.toLowerCase()),
+      );
+    } else if (trimmed === ":" || (hasTypePrefix && !typePrefix)) {
+      // User just typed ":" or ": " - show all suggestions
+      suggestions = allTypePrefixes;
+    }
+
+    return suggestions;
   }, [query]);
 
   const searchIndex = useMemo(() => {
@@ -42,13 +91,29 @@ export default function LocationSearch({
   }, [features]);
 
   const results = useMemo(() => {
-    if (q.length < 2) return [] as SearchItem[];
-    return searchIndex
-      .filter((item) => item.searchText.includes(q))
+    if (normalizedSearchQuery.length < 2 && !filterLevel) return [] as SearchItem[];
+
+    let filtered = searchIndex;
+
+    // Filter by level if type prefix is specified
+    if (filterLevel) {
+      filtered = filtered.filter((item) => item.level === filterLevel);
+    }
+
+    // Filter by search query if provided
+    if (normalizedSearchQuery.length >= 2) {
+      filtered = filtered.filter((item) =>
+        item.searchText.includes(normalizedSearchQuery),
+      );
+    }
+
+    return filtered
       .sort((a, b) => {
-        const aStarts = normalize(a.name).startsWith(q) ? 0 : 1;
-        const bStarts = normalize(b.name).startsWith(q) ? 0 : 1;
-        if (aStarts !== bStarts) return aStarts - bStarts;
+        if (normalizedSearchQuery.length >= 2) {
+          const aStarts = normalize(a.name).startsWith(normalizedSearchQuery) ? 0 : 1;
+          const bStarts = normalize(b.name).startsWith(normalizedSearchQuery) ? 0 : 1;
+          if (aStarts !== bStarts) return aStarts - bStarts;
+        }
 
         if (a.level !== b.level) {
           const order: Record<SearchLevel, number> = {
@@ -64,22 +129,28 @@ export default function LocationSearch({
         return a.indices.length - b.indices.length;
       })
       .slice(0, 50);
-  }, [q, searchIndex]);
+  }, [normalizedSearchQuery, filterLevel, searchIndex]);
 
   const groupedResults = useMemo(() => {
     const nameMatches: SearchItem[] = [];
     const parentOnlyMatches: SearchItem[] = [];
 
     for (const item of results) {
-      const matchesName = normalize(item.name).includes(q);
-      const matchesParents = normalize(item.parentsLabel).includes(q);
-      const isParentsOnlyMatch = q.length >= 2 && !matchesName && matchesParents;
+      if (normalizedSearchQuery.length < 2) {
+        // If no search query, all results are name matches
+        nameMatches.push(item);
+        continue;
+      }
+
+      const matchesName = normalize(item.name).includes(normalizedSearchQuery);
+      const matchesParents = normalize(item.parentsLabel).includes(normalizedSearchQuery);
+      const isParentsOnlyMatch = !matchesName && matchesParents;
       if (isParentsOnlyMatch) parentOnlyMatches.push(item);
       else nameMatches.push(item);
     }
 
     return { nameMatches, parentOnlyMatches };
-  }, [q, results]);
+  }, [normalizedSearchQuery, results]);
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
@@ -94,24 +165,92 @@ export default function LocationSearch({
   return (
     <div
       ref={rootRef}
-      className="absolute top-4 left-4 z-1100 w-lg max-w-[calc(100%-2rem)]"
+      className="absolute top-4 left-4 z-1100 w-md max-w-[calc(100%-2rem)] max-md:w-full"
     >
-      <Card className="border-none bg-transparent text-zinc-50">
-        <CardContent className="p-0">
-          <Input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setIsOpen(true);
-            }}
-            onFocus={() => setIsOpen(true)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setIsOpen(false);
-              if (e.key === "Enter" && results.length === 1) onPick(results[0]);
-            }}
-            placeholder="Search Province, District, Sector, Cell, or Village..."
-            className="bg-zinc-950/80 backdrop-blur focus-visible:ring-0"
-          />
+      <Card className="border-none bg-transparent text-zinc-50 shadow-none">
+        <CardContent className="p-0!">
+          <div className="relative">
+            <Input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setIsOpen(true);
+              }}
+              onFocus={() => setIsOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setIsOpen(false);
+                if (e.key === "Enter" && results.length === 1) onPick(results[0]);
+                // Handle tab/enter for type prefix suggestions
+                if (
+                  (e.key === "Enter" || e.key === "Tab") &&
+                  typePrefixSuggestions.length === 1
+                ) {
+                  e.preventDefault();
+                  const suggestion = typePrefixSuggestions[0];
+                  const restOfQuery = query.trim().startsWith(":")
+                    ? query.trim().slice(1).split(/\s+/).slice(1).join(" ") || ""
+                    : "";
+                  setQuery(`:${suggestion}${restOfQuery ? ` ${restOfQuery}` : ""}`);
+                }
+              }}
+              placeholder={
+                filterLevel
+                  ? `Search ${filterLevel}...`
+                  : "Search... (use :cell, :province, :district, :sector, :village)"
+              }
+              className="bg-zinc-950/80 backdrop-blur focus-visible:ring-0"
+              style={{
+                paddingRight: filterLevel ? "5rem" : undefined,
+              }}
+            />
+            {filterLevel && (
+              <div className="absolute top-1/2 right-3 -translate-y-1/2">
+                <Badge
+                  variant="outline"
+                  className="border-orange-500/30 bg-orange-950/20 text-orange-300"
+                >
+                  {filterLevel}
+                </Badge>
+              </div>
+            )}
+          </div>
+
+          {/* Type prefix suggestions */}
+          {isOpen && typePrefixSuggestions.length > 0 && (
+            <div className="mt-2 rounded-lg border border-white/10 bg-zinc-950/90 p-2 backdrop-blur">
+              <div className="mb-1 px-2 text-[11px] font-medium text-zinc-400 uppercase">
+                Type Filters
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {typePrefixSuggestions.map((prefix) => {
+                  const level = levelMap[prefix];
+                  return (
+                    <Button
+                      key={prefix}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto px-2 py-1 text-xs"
+                      onClick={() => {
+                        const restOfQuery = query.trim().startsWith(":")
+                          ? query.trim().slice(1).split(/\s+/).slice(1).join(" ") || ""
+                          : "";
+                        setQuery(`:${prefix}${restOfQuery ? ` ${restOfQuery}` : ""}`);
+                      }}
+                    >
+                      <Badge
+                        variant="outline"
+                        className="border-orange-500/30 text-orange-300"
+                      >
+                        :{prefix}
+                      </Badge>
+                      <span className="ml-1 text-zinc-400">{level}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {isOpen && results.length > 0 && (
             <div className="mt-2 max-h-[60vh] overflow-auto rounded-lg border border-white/10 bg-zinc-950/90 backdrop-blur">
