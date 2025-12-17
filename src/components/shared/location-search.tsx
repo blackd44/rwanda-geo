@@ -11,6 +11,8 @@ export type SearchItem = {
   id: string;
   level: SearchLevel;
   name: string;
+  parentsLabel: string;
+  searchText: string;
   indices: number[];
 };
 
@@ -42,24 +44,63 @@ export default function LocationSearch({
 
   const searchIndex = useMemo(() => {
     const map = new Map<string, SearchItem>();
-    const add = (level: SearchLevel, name: string, idx: number) => {
+    const add = (
+      level: SearchLevel,
+      name: string,
+      idx: number,
+      parentsKey: string,
+      parentsLabel: string,
+    ) => {
       const clean = name.trim();
       if (!clean) return;
-      const key = `${level}:${normalize(clean)}`;
+      // Important: do NOT de-dupe purely by name. Many locations share the same name
+      // across different parents (e.g. two Cells with the same name in different Districts).
+      const key = `${level}:${normalize(clean)}|${normalize(parentsKey)}`;
       const existing = map.get(key);
       if (existing) {
         existing.indices.push(idx);
         return;
       }
-      map.set(key, { id: key, level, name: clean, indices: [idx] });
+      map.set(key, {
+        id: key,
+        level,
+        name: clean,
+        parentsLabel,
+        searchText: normalize(`${clean} ${parentsLabel}`),
+        indices: [idx],
+      });
     };
 
     features.forEach((f, idx) => {
       const p = f.properties;
-      add("Province", getProp(p, "NAME_1"), idx);
-      add("District", getProp(p, "NAME_2"), idx);
-      add("Cell", getProp(p, "NAME_4"), idx);
-      add("Village", getProp(p, "NAME_5"), idx);
+      const country = getProp(p, "NAME_0");
+      const province = getProp(p, "NAME_1");
+      const district = getProp(p, "NAME_2");
+      const sector = getProp(p, "NAME_3");
+      const cell = getProp(p, "NAME_4");
+
+      add("Province", province, idx, country, country);
+      add(
+        "District",
+        district,
+        idx,
+        `${province}|${country}`,
+        `${province} • ${country}`,
+      );
+      add(
+        "Cell",
+        cell,
+        idx,
+        `${province}|${district}|${sector}`,
+        `${province} • ${district} • ${sector}`,
+      );
+      add(
+        "Village",
+        getProp(p, "NAME_5"),
+        idx,
+        `${province}|${district}|${sector}|${cell}`,
+        `${province} • ${district} • ${sector} • ${cell}`,
+      );
     });
 
     return Array.from(map.values());
@@ -69,12 +110,10 @@ export default function LocationSearch({
     const q = normalize(query);
     if (q.length < 2) return [] as SearchItem[];
     return searchIndex
-      .filter((item) => normalize(item.name).includes(q))
+      .filter((item) => item.searchText.includes(q))
       .sort((a, b) => {
-        const aName = normalize(a.name);
-        const bName = normalize(b.name);
-        const aStarts = aName.startsWith(q) ? 0 : 1;
-        const bStarts = bName.startsWith(q) ? 0 : 1;
+        const aStarts = normalize(a.name).startsWith(q) ? 0 : 1;
+        const bStarts = normalize(b.name).startsWith(q) ? 0 : 1;
         if (aStarts !== bStarts) return aStarts - bStarts;
 
         if (a.level !== b.level) {
@@ -89,32 +128,8 @@ export default function LocationSearch({
 
         return a.indices.length - b.indices.length;
       })
-      .slice(0, 12);
+      .slice(0, 50);
   }, [query, searchIndex]);
-
-  const parentsLabel = (item: SearchItem) => {
-    const first = features[item.indices[0]];
-    const p = first?.properties;
-    const country = getProp(p, "NAME_0");
-    const province = getProp(p, "NAME_1");
-    const district = getProp(p, "NAME_2");
-    const sector = getProp(p, "NAME_3");
-    const cell = getProp(p, "NAME_4");
-
-    // show "parents up to province" on the second line
-    switch (item.level) {
-      case "Province":
-        return country;
-      case "District":
-        return `${province} • ${country}`;
-      case "Cell":
-        return `${province} • ${district} • ${sector}`;
-      case "Village":
-        return `${province} • ${district} • ${sector} • ${cell}`;
-      default:
-        return province;
-    }
-  };
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
@@ -149,7 +164,7 @@ export default function LocationSearch({
           />
 
           {isOpen && results.length > 0 && (
-            <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-zinc-950/80 backdrop-blur">
+            <div className="mt-2 max-h-[60vh] overflow-auto rounded-lg border border-white/10 bg-zinc-950/80 backdrop-blur">
               {results.map((item) => (
                 <Button
                   key={item.id}
@@ -165,7 +180,7 @@ export default function LocationSearch({
                   <div className="min-w-0">
                     <div className="truncate text-sm text-zinc-50">{item.name}</div>
                     <div className="truncate text-xs text-zinc-400">
-                      {parentsLabel(item)}
+                      {item.parentsLabel}
                     </div>
                   </div>
 
