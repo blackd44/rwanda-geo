@@ -21,11 +21,8 @@ export function useUrlParam<T extends string>(
     const updateUrl = () => {
       const params = new URLSearchParams(window.location.search);
 
-      if (value && value !== defaultValue) {
-        params.set(key, value);
-      } else {
-        params.delete(key);
-      }
+      if (value && value !== defaultValue) params.set(key, value);
+      else params.delete(key);
 
       const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
       window.history.replaceState({}, "", newUrl);

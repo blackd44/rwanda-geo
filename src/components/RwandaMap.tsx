@@ -173,15 +173,11 @@ export default function RwandaMap() {
 
   // Clear invalid URL params
   useEffect(() => {
-    if (selectedId && !selected) {
-      setSelectedId("" as typeof selectedId);
-    }
+    if (selectedId && !selected) setSelectedId("" as typeof selectedId);
   }, [selectedId, selected, setSelectedId]);
 
   useEffect(() => {
-    if (highlightedId && !highlightedRegion) {
-      setHighlightedId("");
-    }
+    if (highlightedId && !highlightedRegion) setHighlightedId("");
   }, [highlightedId, highlightedRegion, setHighlightedId]);
 
   const clearSelection = () => {
@@ -215,9 +211,10 @@ export default function RwandaMap() {
       // Select ONE village (and clear any region highlight)
       clearRegionHighlight();
       const first = features[item.indices[0]];
-      if (first?.properties) {
-        setSelectedId(featureId(first.properties));
-      }
+      const id = featureId(first?.properties);
+
+      if (first?.properties) setSelectedId(id);
+
       return;
     }
 
@@ -253,16 +250,6 @@ export default function RwandaMap() {
 
     const handleClick = () => {
       const clickedId = featureId(p);
-      const currentId = selectedId;
-      const isToggleOff = currentId && clickedId === currentId;
-
-      // Toggle off if clicking the same feature again
-      if (isToggleOff) {
-        layer.setStyle(baseStyle);
-        if (lastSelectedLayer.current === layer) lastSelectedLayer.current = null;
-        setSelectedId("");
-        return;
-      }
 
       if (lastSelectedLayer.current && lastSelectedLayer.current !== layer)
         lastSelectedLayer.current.setStyle(baseStyle);
@@ -321,6 +308,7 @@ export default function RwandaMap() {
             baseStyle={baseStyle}
             setSelected={(value) => {
               if (value) {
+                console.log("value", value);
                 setSelectedId(featureId(value) as typeof selectedId);
               } else {
                 setSelectedId("");
