@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { GeoJSON, MapContainer, TileLayer, ZoomControl } from "react-leaflet";
+import { GeoJSON, MapContainer, Marker, TileLayer, ZoomControl } from "react-leaflet";
 import villages from "../data/rwanda_villages_simplified.json";
 import type {
   Feature,
@@ -15,6 +15,7 @@ import SelectedCard from "@/components/shared/selected";
 import RegionStatsCard from "@/components/shared/region-stats";
 import { useUrlParam } from "@/hooks/useUrlParam";
 import { buildSearchIndexMap } from "@/lib/search-index";
+import { MapClickHandler } from "./handlers/MapClickHandler";
 
 function getLabel(p: GeoJsonProperties | null | undefined, key: string) {
   const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
@@ -37,6 +38,22 @@ function featureId(p: GeoJsonProperties | null | undefined) {
 export default function RwandaMap() {
   const [selectedId, setSelectedId] = useUrlParam<string>("selected", "", 0);
   const [highlightedId, setHighlightedId] = useUrlParam<string>("highlight", "", 0);
+  const [pinnedLocation, setPinnedLocation] = useUrlParam<string>("pinned", "", 0);
+
+  // Parse pinned location from URL (format: "lat,lon")
+  const pinnedLatLng = useMemo(() => {
+    if (!pinnedLocation) return null;
+
+    const parts = pinnedLocation.split(",");
+    if (parts.length !== 2) return null;
+
+    const lat = parseFloat(parts[0]);
+    const lon = parseFloat(parts[1]);
+    if (isNaN(lat) || isNaN(lon)) return null;
+
+    return L.latLng(lat, lon);
+  }, [pinnedLocation]);
+
   const lastSelectedLayer = useRef<Path | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const boundsCache = useRef<Map<number, LatLngBounds>>(new Map());
@@ -69,6 +86,75 @@ export default function RwandaMap() {
     [featureCollection.features],
   );
 
+  const spatialGridIndex = useMemo(() => {
+    const n = features.length;
+
+    // Target: 3-5 features per cell for optimal balance
+    const targetFeaturesPerCell = 4;
+    const optimalGridSize = Math.ceil(Math.sqrt(n / targetFeaturesPerCell));
+    // Clamp between reasonable bounds (30-80 cells for performance/memory balance)
+    const gridSize = Math.max(30, Math.min(80, optimalGridSize));
+
+    // Use numeric keys instead of strings (faster lookups)
+    const grid: Map<number, number[]> = new Map();
+    const key = (row: number, col: number) => row * gridSize + col;
+
+    // Pre-calculate bounds for all features (avoid recreating layers)
+    const featureBounds = features.map((feature) => {
+      const layer = L.geoJSON(feature as unknown as GeoJsonObject);
+      return layer.getBounds();
+    });
+
+    // Calculate overall bounds from pre-calculated bounds
+    let minLat = Infinity,
+      maxLat = -Infinity,
+      minLng = Infinity,
+      maxLng = -Infinity;
+
+    featureBounds.forEach((bounds) => {
+      minLat = Math.min(minLat, bounds.getSouth());
+      maxLat = Math.max(maxLat, bounds.getNorth());
+      minLng = Math.min(minLng, bounds.getWest());
+      maxLng = Math.max(maxLng, bounds.getEast());
+    });
+
+    const latRange = maxLat - minLat;
+    const lngRange = maxLng - minLng;
+    const cellLatSize = latRange / gridSize;
+    const cellLngSize = lngRange / gridSize;
+
+    // Index each feature using pre-calculated bounds
+    features.forEach((_feature, index) => {
+      const bounds = featureBounds[index];
+
+      // Find grid cells this feature's bounds overlap with
+      const south = Math.floor((bounds.getSouth() - minLat) / cellLatSize);
+      const north = Math.ceil((bounds.getNorth() - minLat) / cellLatSize);
+      const west = Math.floor((bounds.getWest() - minLng) / cellLngSize);
+      const east = Math.ceil((bounds.getEast() - minLng) / cellLngSize);
+
+      for (let row = Math.max(0, south); row <= Math.min(gridSize - 1, north); row++) {
+        for (let col = Math.max(0, west); col <= Math.min(gridSize - 1, east); col++) {
+          const k = key(row, col);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k)!.push(index);
+        }
+      }
+    });
+
+    return {
+      grid,
+      gridSize,
+      minLat,
+      maxLat,
+      minLng,
+      maxLng,
+      cellLatSize,
+      cellLngSize,
+      key,
+    };
+  }, [features]);
+
   // Build search index to reconstruct SearchItems from IDs
   const searchIndexMap = useMemo(() => buildSearchIndexMap(features), [features]);
 
@@ -83,6 +169,7 @@ export default function RwandaMap() {
 
   const fitToIndices = useCallback(
     (indices: number[]) => {
+      console.log("indices", indices);
       if (!mapRef.current) return;
       let bounds: LatLngBounds | null = null;
 
@@ -96,11 +183,86 @@ export default function RwandaMap() {
         bounds = bounds ? bounds.extend(b) : b;
       }
 
-      if (bounds?.isValid()) {
-        mapRef.current.fitBounds(bounds, { padding: [24, 24] });
-      }
+      if (bounds?.isValid()) mapRef.current.fitBounds(bounds, { padding: [24, 24] });
     },
     [features],
+  );
+
+  // Point-in-polygon test using ray-casting algorithm for a single ring
+  const isPointInRing = useCallback(
+    (point: [number, number], ring: number[][]): boolean => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0],
+          yi = ring[i][1];
+        const xj = ring[j][0],
+          yj = ring[j][1];
+        const intersect =
+          yi > point[1] !== yj > point[1] &&
+          point[0] < ((xj - xi) * (point[1] - yi)) / (yj - yi) + xi;
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    },
+    [],
+  );
+
+  // Point-in-polygon test for GeoJSON Polygon (handles exterior ring and holes)
+  const isPointInPolygonCoords = useCallback(
+    (point: [number, number], coordinates: number[][][]): boolean => {
+      if (coordinates.length === 0) return false;
+      const exteriorRing = coordinates[0];
+      if (!isPointInRing(point, exteriorRing)) return false;
+
+      // Check if point is in any hole (if so, it's outside)
+      for (let i = 1; i < coordinates.length; i++) {
+        if (isPointInRing(point, coordinates[i])) return false;
+      }
+      return true;
+    },
+    [isPointInRing],
+  );
+
+  const getVillageAtLatLng = useCallback(
+    (latlng: L.LatLng): Feature | null => {
+      const point = L.latLng(latlng);
+      const pointCoords: [number, number] = [point.lng, point.lat]; // GeoJSON uses [lng, lat]
+
+      // Find which grid cell the point is in
+      const { grid, gridSize, minLat, minLng, cellLatSize, cellLngSize, key } =
+        spatialGridIndex;
+      const row = Math.floor((point.lat - minLat) / cellLatSize);
+      const col = Math.floor((point.lng - minLng) / cellLngSize);
+
+      // Clamp to valid grid range
+      const validRow = Math.max(0, Math.min(gridSize - 1, row));
+      const validCol = Math.max(0, Math.min(gridSize - 1, col));
+      const gridKey = key(validRow, validCol);
+
+      // Get candidate features from this grid cell (using numeric key for faster lookup)
+      const candidateIndices = grid.get(gridKey) || [];
+
+      // Check candidates with accurate point-in-polygon test
+      for (const index of candidateIndices) {
+        const feature = features[index];
+        if (!feature) continue;
+
+        // Quick bounds check first
+        const layer = L.geoJSON(feature as unknown as GeoJsonObject);
+        if (!layer.getBounds().contains(point)) continue;
+
+        // Accurate point-in-polygon test
+        const geometry = feature.geometry;
+        if (geometry.type === "Polygon") {
+          if (isPointInPolygonCoords(pointCoords, geometry.coordinates)) return feature;
+        } else if (geometry.type === "MultiPolygon") {
+          for (const polygon of geometry.coordinates)
+            if (isPointInPolygonCoords(pointCoords, polygon)) return feature;
+        }
+      }
+      return null;
+    },
+    [features, isPointInPolygonCoords, spatialGridIndex],
   );
 
   // Reconstruct selected from URL param
@@ -186,11 +348,12 @@ export default function RwandaMap() {
       lastSelectedLayer.current = null;
     }
     setSelectedId("" as typeof selectedId);
+    setPinnedLocation("");
   };
 
-  const clearRegionHighlight = () => {
+  const clearRegionHighlight = useCallback(() => {
     setHighlightedId("");
-  };
+  }, [setHighlightedId]);
 
   const highlightedIdSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
 
@@ -201,6 +364,24 @@ export default function RwandaMap() {
   useEffect(() => {
     highlightedRegionRef.current = highlightedRegion;
   }, [highlightedRegion]);
+
+  const handleMapClick = useCallback(
+    (latlng: L.LatLng) => {
+      // Set pin location to the cursor position
+      setPinnedLocation(`${latlng.lat},${latlng.lng}`);
+
+      // Find and select the village at this location
+      const feature = getVillageAtLatLng(latlng);
+      if (feature) {
+        setSelectedId(featureId(feature.properties));
+        clearRegionHighlight();
+      } else {
+        // If no village found, clear selection but keep pin
+        setSelectedId("");
+      }
+    },
+    [getVillageAtLatLng, setPinnedLocation, setSelectedId, clearRegionHighlight],
+  );
 
   const onPick = (item: SearchItem) => {
     // Clear existing single-feature highlight when jumping to a region
@@ -245,31 +426,6 @@ export default function RwandaMap() {
     };
   }, [features, highlightedRegion]);
 
-  const onEachFeature = (feature: Feature, layer: Path) => {
-    const p = feature.properties;
-
-    const handleClick = () => {
-      const clickedId = featureId(p);
-
-      if (lastSelectedLayer.current && lastSelectedLayer.current !== layer)
-        lastSelectedLayer.current.setStyle(baseStyle);
-
-      layer.setStyle(selectedStyle);
-      lastSelectedLayer.current = layer;
-      setSelectedId(clickedId);
-    };
-
-    layer.on("click", () => {
-      handleClick();
-    });
-
-    layer.on("dblclick", () => {
-      clearRegionHighlight();
-
-      handleClick();
-    });
-  };
-
   return (
     <div className="relative h-screen w-full">
       <LocationSearch features={features} onPick={onPick} />
@@ -287,9 +443,10 @@ export default function RwandaMap() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+        <MapClickHandler onMapClick={handleMapClick} />
+
         <GeoJSON
           data={villages as FeatureCollection}
-          onEachFeature={onEachFeature}
           style={(feature) => {
             const p = (feature as Feature).properties;
             const isSelected = selected ? featureId(p) === featureId(selected) : false;
@@ -298,6 +455,28 @@ export default function RwandaMap() {
             return baseStyle;
           }}
         />
+
+        {pinnedLatLng && (
+          <Marker
+            position={pinnedLatLng}
+            draggable
+            eventHandlers={{
+              dragend: (e) => {
+                const latlng = e.target.getLatLng();
+                setPinnedLocation(`${latlng.lat},${latlng.lng}`);
+                const feature = getVillageAtLatLng(latlng);
+                if (feature) setSelectedId(featureId(feature.properties));
+              },
+              click: (e) => {
+                const latlng = e.target.getLatLng();
+                const feature = getVillageAtLatLng(latlng);
+
+                console.log("feature", feature?.properties);
+                fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
+              },
+            }}
+          />
+        )}
       </MapContainer>
 
       <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 max-[52rem]:top-16 max-md:text-xs">
