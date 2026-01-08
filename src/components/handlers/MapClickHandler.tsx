@@ -1,14 +1,16 @@
+import type { LeafletMouseEventHandlerFn } from "leaflet";
 import { useMapEvents } from "react-leaflet";
 
 export function MapClickHandler({
   onMapClick,
+  onMapDoubleClick,
 }: {
-  onMapClick: (latlng: L.LatLng) => void;
+  onMapClick?: LeafletMouseEventHandlerFn;
+  onMapDoubleClick?: LeafletMouseEventHandlerFn;
 }) {
   useMapEvents({
-    click: (e) => {
-      onMapClick(e.latlng);
-    },
+    click: onMapClick,
+    dblclick: onMapDoubleClick,
   });
   return null;
 }

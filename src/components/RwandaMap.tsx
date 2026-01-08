@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { GeoJSON, MapContainer, Marker, TileLayer, ZoomControl } from "react-leaflet";
+import { GeoJSON, MapContainer, Marker, ZoomControl, ScaleControl } from "react-leaflet";
 import villages from "../data/rwanda_villages_simplified.json";
 import type {
   Feature,
@@ -8,14 +8,17 @@ import type {
   GeoJsonObject,
 } from "geojson";
 import * as L from "leaflet";
-import type { LatLngBounds, Map as LeafletMap, Path } from "leaflet";
+import type { LatLngBounds, Map as LeafletMap } from "leaflet";
 import type { SearchItem } from "@/components/shared/location-search";
 import LocationSearch from "@/components/shared/location-search";
 import SelectedCard from "@/components/shared/selected";
 import RegionStatsCard from "@/components/shared/region-stats";
 import { useUrlParam } from "@/hooks/useUrlParam";
+import { useSpatialIndex } from "@/hooks/useSpatialIndex";
 import { buildSearchIndexMap } from "@/lib/search-index";
 import { MapClickHandler } from "./handlers/MapClickHandler";
+import Footer from "./shared/footer";
+import { LayerControl } from "./shared/layer-control";
 
 function getLabel(p: GeoJsonProperties | null | undefined, key: string) {
   const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
@@ -54,7 +57,7 @@ export default function RwandaMap() {
     return L.latLng(lat, lon);
   }, [pinnedLocation]);
 
-  const lastSelectedLayer = useRef<Path | null>(null);
+  // const lastSelectedLayer = useRef<Path | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const boundsCache = useRef<Map<number, LatLngBounds>>(new Map());
   const selectedRef = useRef<GeoJsonProperties | null>(null);
@@ -86,74 +89,8 @@ export default function RwandaMap() {
     [featureCollection.features],
   );
 
-  const spatialGridIndex = useMemo(() => {
-    const n = features.length;
-
-    // Target: 3-5 features per cell for optimal balance
-    const targetFeaturesPerCell = 4;
-    const optimalGridSize = Math.ceil(Math.sqrt(n / targetFeaturesPerCell));
-    // Clamp between reasonable bounds (30-80 cells for performance/memory balance)
-    const gridSize = Math.max(30, Math.min(80, optimalGridSize));
-
-    // Use numeric keys instead of strings (faster lookups)
-    const grid: Map<number, number[]> = new Map();
-    const key = (row: number, col: number) => row * gridSize + col;
-
-    // Pre-calculate bounds for all features (avoid recreating layers)
-    const featureBounds = features.map((feature) => {
-      const layer = L.geoJSON(feature as unknown as GeoJsonObject);
-      return layer.getBounds();
-    });
-
-    // Calculate overall bounds from pre-calculated bounds
-    let minLat = Infinity,
-      maxLat = -Infinity,
-      minLng = Infinity,
-      maxLng = -Infinity;
-
-    featureBounds.forEach((bounds) => {
-      minLat = Math.min(minLat, bounds.getSouth());
-      maxLat = Math.max(maxLat, bounds.getNorth());
-      minLng = Math.min(minLng, bounds.getWest());
-      maxLng = Math.max(maxLng, bounds.getEast());
-    });
-
-    const latRange = maxLat - minLat;
-    const lngRange = maxLng - minLng;
-    const cellLatSize = latRange / gridSize;
-    const cellLngSize = lngRange / gridSize;
-
-    // Index each feature using pre-calculated bounds
-    features.forEach((_feature, index) => {
-      const bounds = featureBounds[index];
-
-      // Find grid cells this feature's bounds overlap with
-      const south = Math.floor((bounds.getSouth() - minLat) / cellLatSize);
-      const north = Math.ceil((bounds.getNorth() - minLat) / cellLatSize);
-      const west = Math.floor((bounds.getWest() - minLng) / cellLngSize);
-      const east = Math.ceil((bounds.getEast() - minLng) / cellLngSize);
-
-      for (let row = Math.max(0, south); row <= Math.min(gridSize - 1, north); row++) {
-        for (let col = Math.max(0, west); col <= Math.min(gridSize - 1, east); col++) {
-          const k = key(row, col);
-          if (!grid.has(k)) grid.set(k, []);
-          grid.get(k)!.push(index);
-        }
-      }
-    });
-
-    return {
-      grid,
-      gridSize,
-      minLat,
-      maxLat,
-      minLng,
-      maxLng,
-      cellLatSize,
-      cellLngSize,
-      key,
-    };
-  }, [features]);
+  // Use spatial index hook for point-in-polygon queries
+  const { getVillageAtLatLng } = useSpatialIndex(features);
 
   // Build search index to reconstruct SearchItems from IDs
   const searchIndexMap = useMemo(() => buildSearchIndexMap(features), [features]);
@@ -169,7 +106,6 @@ export default function RwandaMap() {
 
   const fitToIndices = useCallback(
     (indices: number[]) => {
-      console.log("indices", indices);
       if (!mapRef.current) return;
       let bounds: LatLngBounds | null = null;
 
@@ -186,83 +122,6 @@ export default function RwandaMap() {
       if (bounds?.isValid()) mapRef.current.fitBounds(bounds, { padding: [24, 24] });
     },
     [features],
-  );
-
-  // Point-in-polygon test using ray-casting algorithm for a single ring
-  const isPointInRing = useCallback(
-    (point: [number, number], ring: number[][]): boolean => {
-      let inside = false;
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const xi = ring[i][0],
-          yi = ring[i][1];
-        const xj = ring[j][0],
-          yj = ring[j][1];
-        const intersect =
-          yi > point[1] !== yj > point[1] &&
-          point[0] < ((xj - xi) * (point[1] - yi)) / (yj - yi) + xi;
-        if (intersect) inside = !inside;
-      }
-      return inside;
-    },
-    [],
-  );
-
-  // Point-in-polygon test for GeoJSON Polygon (handles exterior ring and holes)
-  const isPointInPolygonCoords = useCallback(
-    (point: [number, number], coordinates: number[][][]): boolean => {
-      if (coordinates.length === 0) return false;
-      const exteriorRing = coordinates[0];
-      if (!isPointInRing(point, exteriorRing)) return false;
-
-      // Check if point is in any hole (if so, it's outside)
-      for (let i = 1; i < coordinates.length; i++) {
-        if (isPointInRing(point, coordinates[i])) return false;
-      }
-      return true;
-    },
-    [isPointInRing],
-  );
-
-  const getVillageAtLatLng = useCallback(
-    (latlng: L.LatLng): Feature | null => {
-      const point = L.latLng(latlng);
-      const pointCoords: [number, number] = [point.lng, point.lat]; // GeoJSON uses [lng, lat]
-
-      // Find which grid cell the point is in
-      const { grid, gridSize, minLat, minLng, cellLatSize, cellLngSize, key } =
-        spatialGridIndex;
-      const row = Math.floor((point.lat - minLat) / cellLatSize);
-      const col = Math.floor((point.lng - minLng) / cellLngSize);
-
-      // Clamp to valid grid range
-      const validRow = Math.max(0, Math.min(gridSize - 1, row));
-      const validCol = Math.max(0, Math.min(gridSize - 1, col));
-      const gridKey = key(validRow, validCol);
-
-      // Get candidate features from this grid cell (using numeric key for faster lookup)
-      const candidateIndices = grid.get(gridKey) || [];
-
-      // Check candidates with accurate point-in-polygon test
-      for (const index of candidateIndices) {
-        const feature = features[index];
-        if (!feature) continue;
-
-        // Quick bounds check first
-        const layer = L.geoJSON(feature as unknown as GeoJsonObject);
-        if (!layer.getBounds().contains(point)) continue;
-
-        // Accurate point-in-polygon test
-        const geometry = feature.geometry;
-        if (geometry.type === "Polygon") {
-          if (isPointInPolygonCoords(pointCoords, geometry.coordinates)) return feature;
-        } else if (geometry.type === "MultiPolygon") {
-          for (const polygon of geometry.coordinates)
-            if (isPointInPolygonCoords(pointCoords, polygon)) return feature;
-        }
-      }
-      return null;
-    },
-    [features, isPointInPolygonCoords, spatialGridIndex],
   );
 
   // Reconstruct selected from URL param
@@ -282,6 +141,12 @@ export default function RwandaMap() {
     if (!highlightedRegion) return [];
     return idsFromIndices(highlightedRegion.indices);
   }, [highlightedRegion, idsFromIndices]);
+
+  const highlightedIdSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
+
+  const clearRegionHighlight = useCallback(() => {
+    setHighlightedId("");
+  }, [setHighlightedId]);
 
   // Zoom to Rwanda bounds (default)
   const zoomToRwanda = useCallback(() => {
@@ -343,19 +208,9 @@ export default function RwandaMap() {
   }, [highlightedId, highlightedRegion, setHighlightedId]);
 
   const clearSelection = () => {
-    if (lastSelectedLayer.current) {
-      lastSelectedLayer.current.setStyle(baseStyle);
-      lastSelectedLayer.current = null;
-    }
     setSelectedId("" as typeof selectedId);
     setPinnedLocation("");
   };
-
-  const clearRegionHighlight = useCallback(() => {
-    setHighlightedId("");
-  }, [setHighlightedId]);
-
-  const highlightedIdSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -434,16 +289,24 @@ export default function RwandaMap() {
         center={[-1.94, 29.87]}
         zoom={9}
         className="h-full w-full"
-        zoomControl={false}
         ref={mapRef}
+        zoomControl={false}
+        doubleClickZoom={false}
       >
+        {/* bottom right */}
+        <ScaleControl position="bottomright" imperial={false} />
         <ZoomControl position="bottomright" />
-        <TileLayer
-          attribution="© OpenStreetMap contributors"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
 
-        <MapClickHandler onMapClick={handleMapClick} />
+        {/* bottom left */}
+        <LayerControl />
+
+        <MapClickHandler
+          onMapClick={(e) => handleMapClick(e.latlng)}
+          onMapDoubleClick={(e) => {
+            const feature = getVillageAtLatLng(e.latlng);
+            fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
+          }}
+        />
 
         <GeoJSON
           data={villages as FeatureCollection}
@@ -470,8 +333,6 @@ export default function RwandaMap() {
               click: (e) => {
                 const latlng = e.target.getLatLng();
                 const feature = getVillageAtLatLng(latlng);
-
-                console.log("feature", feature?.properties);
                 fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
               },
             }}
@@ -482,16 +343,11 @@ export default function RwandaMap() {
       <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 max-[52rem]:top-16 max-md:text-xs">
         {selected && (
           <SelectedCard
+            latlng={pinnedLatLng}
             selected={selected}
-            lastSelectedLayerRef={lastSelectedLayer}
-            baseStyle={baseStyle}
             setSelected={(value) => {
-              if (value) {
-                console.log("value", value);
-                setSelectedId(featureId(value) as typeof selectedId);
-              } else {
-                setSelectedId("");
-              }
+              if (value) setSelectedId(featureId(value) as typeof selectedId);
+              else setSelectedId("");
             }}
           />
         )}
@@ -506,29 +362,7 @@ export default function RwandaMap() {
       </div>
 
       {/* Floating Footer */}
-      <div className="pointer-events-none absolute bottom-0 z-1000 w-full">
-        <div className="pointer-events-auto mx-auto flex w-fit flex-wrap items-center justify-center gap-1 rounded-lg rounded-b-none border border-white/10 bg-zinc-950/80 px-2 py-1 text-[10px] text-zinc-400 backdrop-blur md:gap-2 md:px-4 md:py-1.5 md:text-xs">
-          <span>© 2025</span>
-          <a
-            href="https://blackd44.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-orange-300 transition-colors hover:text-orange-200"
-          >
-            blackd44
-          </a>
-          <span>•</span>
-          <span>
-            {/* <a
-              href="https://geoportal.mininfra.gov.rw"
-              target="_blank"
-              rel="noopener noreferrer"
-            > */}
-            Data source: MININFRA Geoportal
-            {/* </a> */}
-          </span>
-        </div>
-      </div>
+      <Footer />
     </div>
   );
 }

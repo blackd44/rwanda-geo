@@ -1,19 +1,18 @@
-import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import type { GeoJsonProperties } from "geojson";
-import type { Path, PathOptions } from "leaflet";
-import { XIcon } from "lucide-react";
+import { XIcon, Copy } from "lucide-react";
+import type { LatLng } from "leaflet";
+import { latLngToDMS } from "@/lib/dms";
+import { copyToClipboard } from "@/lib/copy";
 
 export default function SelectedCard({
+  latlng,
   selected,
-  lastSelectedLayerRef,
-  baseStyle,
   setSelected,
 }: {
+  latlng?: LatLng | null;
   selected: GeoJsonProperties | null;
-  lastSelectedLayerRef: React.RefObject<Path | null>;
-  baseStyle: PathOptions;
   setSelected: (selected: GeoJsonProperties | null) => void;
 }) {
   const getLabel = (p: GeoJsonProperties | null | undefined, key: string) => {
@@ -34,6 +33,18 @@ export default function SelectedCard({
             <CardTitle className="mt-1 text-sm wrap-break-word text-zinc-50 md:text-base">
               {getLabel(selected, "NAME_5")}
             </CardTitle>
+            {latlng && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await copyToClipboard(`${latlng.lat}, ${latlng.lng}`);
+                }}
+                className="group mt-1 flex items-center gap-1.5 text-[10px] text-zinc-300/80 underline-offset-2 transition hover:text-zinc-50 hover:underline focus:text-green-200 md:text-xs"
+              >
+                <span>{latLngToDMS(latlng.lat, latlng.lng)}</span>
+                <Copy className="h-3 w-3 opacity-0 transition group-hover:opacity-100 group-focus:scale-50 group-focus:opacity-100" />
+              </button>
+            )}
           </div>
 
           <Button
@@ -42,10 +53,6 @@ export default function SelectedCard({
             size="sm"
             className="h-auto shrink-0 p-1! md:p-2"
             onClick={() => {
-              if (lastSelectedLayerRef.current) {
-                lastSelectedLayerRef.current.setStyle(baseStyle);
-                lastSelectedLayerRef.current = null;
-              }
               setSelected(null);
             }}
             aria-label="Close selected village details"
