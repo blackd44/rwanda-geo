@@ -120,8 +120,27 @@ export function useSpatialIndex(features: Feature[]) {
       const pointCoords: [number, number] = [point.lng, point.lat]; // GeoJSON uses [lng, lat]
 
       // Find which grid cell the point is in
-      const { grid, gridSize, minLat, minLng, cellLatSize, cellLngSize, key } =
-        spatialGridIndex;
+      const {
+        grid,
+        gridSize,
+        minLat,
+        maxLat,
+        minLng,
+        maxLng,
+        cellLatSize,
+        cellLngSize,
+        key,
+      } = spatialGridIndex;
+
+      // Quick bounds check: if point is outside the bounds of all features, return null immediately
+      if (
+        point.lat < minLat ||
+        point.lat > maxLat ||
+        point.lng < minLng ||
+        point.lng > maxLng
+      )
+        return null;
+
       const row = Math.floor((point.lat - minLat) / cellLatSize);
       const col = Math.floor((point.lng - minLng) / cellLngSize);
 

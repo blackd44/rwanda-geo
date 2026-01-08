@@ -259,6 +259,26 @@ export default function RwandaMap() {
     setHighlightedId(item.id);
   };
 
+  const onCoordinatePick = useCallback(
+    (lat: number, lng: number) => {
+      const latlng = L.latLng(lat, lng);
+      setPinnedLocation(`${lat},${lng}`);
+
+      // Find and select village at this location
+      const feature = getVillageAtLatLng(latlng);
+      if (feature) {
+        setSelectedId(featureId(feature.properties));
+        // Move map to location
+        fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
+      } else {
+        setSelectedId("" as typeof selectedId);
+        // Move map to location
+        if (mapRef.current) mapRef.current.setView(latlng, 15, { animate: true });
+      }
+    },
+    [setPinnedLocation, getVillageAtLatLng, setSelectedId, fitToIndices],
+  );
+
   const regionStats = useMemo(() => {
     if (!highlightedRegion) return null;
     const uniqueIndices = Array.from(new Set(highlightedRegion.indices));
@@ -283,7 +303,11 @@ export default function RwandaMap() {
 
   return (
     <div className="relative h-screen w-full">
-      <LocationSearch features={features} onPick={onPick} />
+      <LocationSearch
+        features={features}
+        onPick={onPick}
+        onCoordinatePick={onCoordinatePick}
+      />
 
       <MapContainer
         center={[-1.94, 29.87]}
@@ -304,7 +328,10 @@ export default function RwandaMap() {
           onMapClick={(e) => handleMapClick(e.latlng)}
           onMapDoubleClick={(e) => {
             const feature = getVillageAtLatLng(e.latlng);
-            fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
+            console.log("feature", feature);
+
+            const id = feature?.properties?.ID_5 ?? 0;
+            if (id > 0) fitToIndices([id - 1]);
           }}
         />
 

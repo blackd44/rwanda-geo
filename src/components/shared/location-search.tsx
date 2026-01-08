@@ -6,6 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useUrlParam } from "@/hooks/useUrlParam";
 import { buildSearchIndexMap, normalize } from "@/lib/search-index";
+import { LocationButton } from "./location-button";
+import { parseCoordinates } from "@/lib/coords";
 
 export type SearchLevel = "Province" | "District" | "Sector" | "Cell" | "Village";
 
@@ -31,13 +33,17 @@ const allTypePrefixes = Object.keys(levelMap);
 export default function LocationSearch({
   features,
   onPick,
+  onCoordinatePick,
 }: {
   features: Feature[];
   onPick: (item: SearchItem) => void;
+  onCoordinatePick?: (lat: number, lng: number) => void;
 }) {
   const [query, setQuery] = useUrlParam<string>("search", "", 300);
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const blurTimeoutRef = useRef<number | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -90,7 +96,16 @@ export default function LocationSearch({
     return Array.from(map.values());
   }, [features]);
 
+  // Check if query is coordinates
+  const coordinates = useMemo(() => {
+    if (!debouncedQuery.trim()) return null;
+    return parseCoordinates(debouncedQuery);
+  }, [debouncedQuery]);
+
   const results = useMemo(() => {
+    // If coordinates are detected, don't show regular search results
+    if (coordinates) return [] as SearchItem[];
+
     if (normalizedSearchQuery.length < 2 && !filterLevel) return [] as SearchItem[];
 
     let filtered = searchIndex;
@@ -129,7 +144,7 @@ export default function LocationSearch({
         return a.indices.length - b.indices.length;
       })
       .slice(0, 50);
-  }, [normalizedSearchQuery, filterLevel, searchIndex]);
+  }, [normalizedSearchQuery, filterLevel, searchIndex, coordinates]);
 
   const groupedResults = useMemo(() => {
     const nameMatches: SearchItem[] = [];
@@ -176,9 +191,29 @@ export default function LocationSearch({
                 setQuery(e.target.value);
                 setIsOpen(true);
               }}
-              onFocus={() => setIsOpen(true)}
+              onFocus={() => {
+                if (blurTimeoutRef.current) {
+                  clearTimeout(blurTimeoutRef.current);
+                  blurTimeoutRef.current = null;
+                }
+                setIsOpen(true);
+                setIsFocused(true);
+              }}
+              onBlur={() => {
+                // Delay blur to allow button click to register
+                blurTimeoutRef.current = setTimeout(() => {
+                  setIsFocused(false);
+                }, 200);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setIsOpen(false);
+                // Handle coordinate search
+                if (e.key === "Enter" && coordinates && onCoordinatePick) {
+                  e.preventDefault();
+                  onCoordinatePick(coordinates.lat, coordinates.lng);
+                  setIsOpen(false);
+                  return;
+                }
                 if (e.key === "Enter" && results.length === 1) onPick(results[0]);
                 // Handle tab/enter for type prefix suggestions
                 if (
@@ -200,10 +235,21 @@ export default function LocationSearch({
               }
               className="bg-zinc-950/80 backdrop-blur focus-visible:ring-0"
               style={{
-                paddingRight: filterLevel ? "5rem" : undefined,
+                paddingRight: filterLevel || isFocused ? "5rem" : undefined,
               }}
             />
-            {filterLevel && (
+            {isFocused && onCoordinatePick && (
+              <div
+                className="absolute top-1/2 right-3 -translate-y-1/2"
+                onMouseDown={(e) => {
+                  // Prevent input blur when clicking the button
+                  e.preventDefault();
+                }}
+              >
+                <LocationButton onLocationFound={onCoordinatePick} />
+              </div>
+            )}
+            {filterLevel && !isFocused && (
               <div className="absolute top-1/2 right-3 -translate-y-1/2">
                 <Badge
                   variant="outline"
@@ -249,6 +295,31 @@ export default function LocationSearch({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Coordinate search result */}
+          {isOpen && coordinates && onCoordinatePick && (
+            <div className="mt-2 rounded-lg border border-blue-500/30 bg-zinc-950/90 p-3 backdrop-blur">
+              <div className="mb-2 flex items-center gap-2">
+                <div className="text-sm font-medium text-blue-300">
+                  Coordinates detected
+                </div>
+                <Badge variant="outline" className="border-blue-500/30 text-blue-300">
+                  {coordinates.lat.toFixed(6)}, {coordinates.lng.toFixed(6)}
+                </Badge>
+              </div>
+              <Button
+                type="button"
+                variant="default"
+                className="w-full"
+                onClick={() => {
+                  onCoordinatePick(coordinates.lat, coordinates.lng);
+                  setIsOpen(false);
+                }}
+              >
+                Go to location
+              </Button>
             </div>
           )}
 
