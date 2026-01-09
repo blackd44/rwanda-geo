@@ -357,12 +357,19 @@ export default function RwandaMap() {
                 const feature = getVillageAtLatLng(latlng);
                 if (feature) setSelectedId(featureId(feature.properties));
               },
-              click: (e) => {
+              dblclick: (e) => {
                 const latlng = e.target.getLatLng();
                 const feature = getVillageAtLatLng(latlng);
+                console.log("feature", feature);
                 fitToIndices([(feature?.properties?.ID_5 ?? 1) - 1]);
               },
             }}
+            icon={L.icon({
+              iconUrl: "/marker.png",
+              iconSize: [60, 60],
+              iconAnchor: [30, 55],
+              popupAnchor: [0, -32],
+            })}
           />
         )}
       </MapContainer>
