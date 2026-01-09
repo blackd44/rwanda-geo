@@ -352,10 +352,18 @@ export default function RwandaMap() {
             draggable
             eventHandlers={{
               dragend: (e) => {
-                const latlng = e.target.getLatLng();
-                setPinnedLocation(`${latlng.lat},${latlng.lng}`);
-                const feature = getVillageAtLatLng(latlng);
-                if (feature) setSelectedId(featureId(feature.properties));
+                const marker = e.target;
+                const map = marker._map;
+                const latlng = marker.getLatLng();
+                const point = map.latLngToContainerPoint(latlng);
+
+                const adjustedLatLng = map.containerPointToLatLng(point);
+                const feature = getVillageAtLatLng(adjustedLatLng);
+
+                setTimeout(() => {
+                  setPinnedLocation(`${adjustedLatLng.lat},${adjustedLatLng.lng}`);
+                  if (feature) setSelectedId(featureId(feature.properties));
+                }, 100);
               },
               dblclick: (e) => {
                 const latlng = e.target.getLatLng();
@@ -368,7 +376,6 @@ export default function RwandaMap() {
               iconUrl: "/marker.png",
               iconSize: [60, 60],
               iconAnchor: [30, 55],
-              popupAnchor: [0, -32],
             })}
           />
         )}
