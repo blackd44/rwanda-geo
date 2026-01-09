@@ -8,6 +8,7 @@ import { useUrlParam } from "@/hooks/useUrlParam";
 import { buildSearchIndexMap, normalize } from "@/lib/search-index";
 import { LocationButton } from "./location-button";
 import { parseCoordinates } from "@/lib/coords";
+import { Search } from "lucide-react";
 
 export type SearchLevel = "Province" | "District" | "Sector" | "Cell" | "Village";
 
@@ -238,15 +239,37 @@ export default function LocationSearch({
                 paddingRight: filterLevel || isFocused ? "5rem" : undefined,
               }}
             />
-            {isFocused && onCoordinatePick && (
+            {!filterLevel && (
               <div
-                className="absolute top-1/2 right-3 -translate-y-1/2"
+                className="absolute top-1/2 right-1 -translate-y-1/2"
                 onMouseDown={(e) => {
                   // Prevent input blur when clicking the button
                   e.preventDefault();
                 }}
               >
-                <LocationButton onLocationFound={onCoordinatePick} />
+                {(!isFocused || query.trim() === "") && onCoordinatePick ? (
+                  <LocationButton onLocationFound={onCoordinatePick} />
+                ) : query.trim() !== "" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      // Handle search button click - same logic as Enter key
+                      if (coordinates && onCoordinatePick) {
+                        onCoordinatePick(coordinates.lat, coordinates.lng);
+                        setIsOpen(false);
+                      } else if (results.length === 1) {
+                        onPick(results[0]);
+                        setIsOpen(false);
+                      }
+                    }}
+                    className="h-8 w-8 rounded-lg border border-white/20 bg-white backdrop-blur hover:bg-gray-100"
+                    aria-label="Search"
+                  >
+                    <Search className="h-4 w-4 text-zinc-900" />
+                  </Button>
+                ) : null}
               </div>
             )}
             {filterLevel && !isFocused && (

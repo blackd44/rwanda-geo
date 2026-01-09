@@ -1,5 +1,11 @@
-import type { Feature } from "geojson";
+import type { Feature, GeoJsonProperties } from "geojson";
 import type { SearchItem, SearchLevel } from "@/components/shared/location-search";
+
+export function getLabel(p: GeoJsonProperties | null | undefined, key: string) {
+  const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
+  if (v === null || v === undefined || v === "") return "Unknown";
+  return String(v);
+}
 
 export function normalize(s: string) {
   return s
@@ -79,4 +85,38 @@ export function buildSearchIndexMap(features: Feature[]): Map<string, SearchItem
   });
 
   return map;
+}
+
+export function getHighlighted(selected: GeoJsonProperties, keyValue: string) {
+  if (isNaN(Number(keyValue))) return;
+
+  const key = Number(keyValue);
+  if (key < 1 || key > 5) return;
+
+  const arrayKeys = [key, ...Array.from({ length: key - 1 }, (_, i) => i + 1)];
+  if (arrayKeys.length <= 2) arrayKeys.push(0);
+  return arrayKeys.map((k) => getLabel(selected, `NAME_${k}`)?.toLowerCase()).join("|");
+}
+
+export function handleHighlight({
+  selected,
+  keyValue,
+  label,
+
+  // functions
+  setHighlightedId,
+}: {
+  selected: GeoJsonProperties | null;
+  keyValue: string;
+  label: string;
+
+  // functions
+  setHighlightedId?: (value: string) => void;
+}) {
+  if (!selected) return;
+
+  const highlighted = getHighlighted(selected, keyValue);
+  if (!highlighted) return;
+
+  if (setHighlightedId) setHighlightedId(`${label}:${highlighted}`);
 }

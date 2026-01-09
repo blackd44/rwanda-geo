@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "../ui/button";
-import { Crosshair } from "lucide-react";
+import { LocateFixedIcon } from "lucide-react";
 
 interface LocationButtonProps {
   onLocationFound: (lat: number, lng: number) => void;
@@ -45,8 +45,11 @@ export function LocationButton({ onLocationFound }: LocationButtonProps) {
       disabled={isLoading}
       className="h-8 w-8 rounded-lg border border-white/20 bg-white backdrop-blur hover:bg-gray-100"
       aria-label="Get current location"
+      title="Get current location"
     >
-      <Crosshair className={`h-4 w-4 text-zinc-900 ${isLoading ? "animate-spin" : ""}`} />
+      <LocateFixedIcon
+        className={`h-4 w-4 text-zinc-900 ${isLoading ? "animate-spin" : ""}`}
+      />
     </Button>
   );
 }

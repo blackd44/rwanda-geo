@@ -5,23 +5,21 @@ import { XIcon, Copy } from "lucide-react";
 import type { LatLng } from "leaflet";
 import { latLngToDMS } from "@/lib/dms";
 import { copyToClipboard } from "@/lib/copy";
+import { getLabel, handleHighlight } from "@/lib/search-index";
+import { cn } from "@/lib/utils";
 
 export default function SelectedCard({
   latlng,
   selected,
   setSelected,
+  setHighlightedId,
 }: {
   latlng?: LatLng | null;
   selected: GeoJsonProperties | null;
+  setHighlightedId?: (value: string) => void;
   setSelected: (selected: GeoJsonProperties | null) => void;
 }) {
-  const getLabel = (p: GeoJsonProperties | null | undefined, key: string) => {
-    const v =
-      p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
-    if (v === null || v === undefined || v === "") return "Unknown";
-    return String(v);
-  };
-
+  console.log(getLabel(selected, `ID_4`));
   return (
     <Card className="max-h-[calc(100vh-2rem)] w-[280px] max-w-[calc(100vw-2rem)] overflow-auto border-white/10 bg-linear-to-br from-zinc-950/80 from-50% to-blue-950/80 to-120% text-zinc-50 shadow-2xl backdrop-blur md:w-[340px]">
       <CardHeader className="pb-2 md:pb-3">
@@ -64,11 +62,11 @@ export default function SelectedCard({
 
       <CardContent className="grid flex-wrap gap-2 max-md:flex max-md:gap-1">
         {[
-          ["Cell", "NAME_4"],
-          ["Sector", "NAME_3"],
-          ["District", "NAME_2"],
-          ["Province", "NAME_1"],
-          ["Country", "NAME_0"],
+          ["Cell", 4],
+          ["Sector", 3],
+          ["District", 2],
+          ["Province", 1],
+          ["Country", 0],
           ["IDs", "ID_5"],
         ].map(([label, key]) => (
           <div
@@ -77,19 +75,53 @@ export default function SelectedCard({
           >
             <div className="text-[10px] text-zinc-300/80 md:text-xs">{label}</div>
             <div className="text-xs wrap-break-word text-zinc-50/90 md:text-sm">
-              {label === "IDs"
-                ? `P${getLabel(selected, "ID_1")} / D${getLabel(
-                    selected,
-                    "ID_2",
-                  )} / S${getLabel(selected, "ID_3")} / C${getLabel(
-                    selected,
-                    "ID_4",
-                  )} / V${getLabel(selected, "ID_5")}`
-                : getLabel(selected, key)}
+              {label === "IDs" ? (
+                `P${getLabel(selected, "ID_1")} / D${getLabel(
+                  selected,
+                  "ID_2",
+                )} / S${getLabel(selected, "ID_3")} / C${getLabel(
+                  selected,
+                  "ID_4",
+                )} / V${getLabel(selected, "ID_5")}`
+              ) : (
+                <Label
+                  key={key}
+                  label={`${label}`}
+                  selected={selected}
+                  keyValue={key.toString()}
+                  setHighlightedId={setHighlightedId}
+                />
+              )}
             </div>
           </div>
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+function Label({
+  selected,
+  label,
+  keyValue,
+  setHighlightedId,
+}: {
+  selected: GeoJsonProperties | null;
+  label: string;
+  keyValue: string;
+  setHighlightedId?: (value: string) => void;
+}) {
+  return (
+    <button
+      onClick={() => handleHighlight({ selected, keyValue, label, setHighlightedId })}
+      className={cn(
+        keyValue !== "0" &&
+          "cursor-pointer underline-offset-2 hover:underline focus:text-blue-400",
+      )}
+      type="button"
+      aria-label={`Highlight ${label}`}
+    >
+      {getLabel(selected, `NAME_${keyValue}`)}
+    </button>
   );
 }

@@ -15,16 +15,10 @@ import SelectedCard from "@/components/shared/selected";
 import RegionStatsCard from "@/components/shared/region-stats";
 import { useUrlParam } from "@/hooks/useUrlParam";
 import { useSpatialIndex } from "@/hooks/useSpatialIndex";
-import { buildSearchIndexMap } from "@/lib/search-index";
+import { buildSearchIndexMap, getLabel } from "@/lib/search-index";
 import { MapClickHandler } from "./handlers/MapClickHandler";
 import Footer from "./shared/footer";
 import { LayerControl } from "./shared/layer-control";
-
-function getLabel(p: GeoJsonProperties | null | undefined, key: string) {
-  const v = p && typeof p === "object" ? (p as Record<string, unknown>)[key] : undefined;
-  if (v === null || v === undefined || v === "") return "Unknown";
-  return String(v);
-}
 
 function featureId(p: GeoJsonProperties | null | undefined) {
   const safe = (k: string) => getLabel(p, k);
@@ -134,6 +128,7 @@ export default function RwandaMap() {
   // Reconstruct highlighted region from URL param
   const highlightedRegion = useMemo(() => {
     if (!highlightedId) return null;
+    console.log("-- highlightedRegion", highlightedId, searchIndexMap.get(highlightedId));
     return searchIndexMap.get(highlightedId) ?? null;
   }, [highlightedId, searchIndexMap]);
 
@@ -204,6 +199,7 @@ export default function RwandaMap() {
   }, [selectedId, selected, setSelectedId]);
 
   useEffect(() => {
+    console.log("-- highlightedId", highlightedId);
     if (highlightedId && !highlightedRegion) setHighlightedId("");
   }, [highlightedId, highlightedRegion, setHighlightedId]);
 
@@ -213,6 +209,7 @@ export default function RwandaMap() {
   };
 
   useEffect(() => {
+    console.log("selected", selected);
     selectedRef.current = selected;
   }, [selected]);
 
@@ -302,7 +299,7 @@ export default function RwandaMap() {
   }, [features, highlightedRegion]);
 
   return (
-    <div className="relative h-screen w-full">
+    <div className="relative h-dvh w-full">
       <LocationSearch
         features={features}
         onPick={onPick}
@@ -384,8 +381,9 @@ export default function RwandaMap() {
       <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 max-[52rem]:top-16 max-md:text-xs">
         {selected && (
           <SelectedCard
-            latlng={pinnedLatLng}
+            setHighlightedId={setHighlightedId}
             selected={selected}
+            latlng={pinnedLatLng}
             setSelected={(value) => {
               if (value) setSelectedId(featureId(value) as typeof selectedId);
               else setSelectedId("");
